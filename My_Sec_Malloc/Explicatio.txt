@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+EXPLICATION:
 #define _GNU_SOURCE: Cette directive active les extensions spécifiques à GNU, nécessaires pour certaines fonctionnalités avancées de la bibliothèque standard.
 
 
@@ -14,6 +15,7 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include "my_secmalloc.private.h": Inclut le fichier d'en-tête spécifique au projet. Cela pourrait contenir des définitions spécifiques comme la structure metadata_t.
+EXPLICATION:
 #include <...>: Inclut les bibliothèques standard nécessaires :
 <stdio.h>: Pour les fonctions d'entrée/sortie.
 <stdlib.h>: Pour les fonctions de gestion de la mémoire et les conversions.
@@ -29,6 +31,7 @@
 
 #define TAILLE_CANARY 16
 #define TAILLE_POOL 1024*1024*1024
+EXPLICATION:
 #define TAILLE_CANARY 16: Définit la taille du canari à 16 octets. Les canaris sont des séquences de bits insérées pour détecter les débordements de mémoire.
 #define TAILLE_POOL 102410241024: Définit la taille du pool de mémoire à 1 Go (1024 Mo).
 
@@ -39,6 +42,7 @@ void *pool_data = NULL;
 void *pool_meta = NULL;
 metadata_t *liste_libre = NULL;
 FILE *log_file = NULL;
+EXPLICATION:
 void *pool_data = NULL;: Pointeur vers la mémoire allouée pour les données.
 void *pool_meta = NULL;: Pointeur vers la mémoire allouée pour les métadonnées.
 metadata_t *liste_libre = NULL;: Pointeur vers la liste chaînée des blocs de mémoire libres.
@@ -62,6 +66,7 @@ void generer_canary(unsigned char *canary) {
     }
     close(fd);
 }
+EXPLICATION:
 void generer_canary(unsigned char *canary): Fonction qui génère une séquence aléatoire pour le canari.
 int fd = open("/dev/urandom", O_RDONLY);: Ouvre le fichier spécial /dev/urandom en lecture seule. Ce fichier fournit des données aléatoires.
 if (fd == -1) { perror("open"); exit(1); }: Vérifie si l'ouverture du fichier a échoué. Si c'est le cas, affiche un message d'erreur et termine le programme.
@@ -83,6 +88,7 @@ void init_log_file(void) {
         }
     }
 }
+EXPLICATION:
 void init_log_file(void): Initialise le fichier de log.
 const char *log_path = getenv("MSM_OUTPUT");: Récupère le chemin du fichier de log depuis la variable d'environnement MSM_OUTPUT.
 if (log_path) { ... }: Si la variable d'environnement est définie :
@@ -106,6 +112,7 @@ void ecrire_log(const char *format, ...) {
         fflush(log_file);
     }
 }
+EXPLICATION:
 void ecrire_log(const char *format, ...): Écrit un message formaté dans le fichier de log.
 if (log_file) { ... }: Si le fichier de log est ouvert :
 va_list args; va_start(args, format);: Initialise args pour accéder aux arguments variables.
@@ -140,6 +147,7 @@ void init_pools(void) {
     generer_canary(liste_libre->canary);
     liste_libre->pointeur_canary = (void *)((char *)liste_libre->pointeur_data + liste_libre->taille - TAILLE_CANARY);
 }
+EXPLICATION:
 void init_pools(void): Initialise les pools de mémoire pour les données et les métadonnées.
 pool_data = mmap(...): Alloue un pool de mémoire de taille TAILLE_POOL pour les données en utilisant mmap.
 if (pool_data == MAP_FAILED) { perror("mmap pool_data"); exit(1); }: Vérifie si l'allocation a échoué. Si c'est le cas, affiche un message d'erreur et termine le programme.
@@ -197,6 +205,7 @@ void *my_malloc(size_t taille) {
     ecrire_log("malloc: Taille: %zu, Adresse: %p", taille, nouveau_bloc_meta->pointeur_data);
     return nouveau_bloc_meta->pointeur_data;
 }
+EXPLICATION:
 void *my_malloc(size_t taille): Implémente la fonction malloc personnalisée.
 if (taille == 0) { return NULL; }: Si la taille demandée est 0, retourne NULL.
 metadata_t *bloc_courant = liste_libre;: Initialise un pointeur pour parcourir la liste des blocs libres.
@@ -219,7 +228,7 @@ if (liste_libre) { liste_libre->precedent = nouveau_bloc_meta; }: Met à jour le
 liste_libre = nouveau_bloc_meta;: Met à jour la tête de la liste chaînée.
 ecrire_log("malloc: Taille: %zu, Adresse: %p", taille, nouveau_bloc_meta->pointeur_data);: Écrit une entrée dans le fichier de log.
 return nouveau_bloc_meta->pointeur_data;: Retourne le pointeur vers les données du nouveau bloc.
-c
+
 
 
 
@@ -251,6 +260,7 @@ void my_free(void *ptr) {
         bloc_courant = bloc_courant->suivant;
     }
 }
+EXPLICATION:
 void my_free(void *ptr): Implémente la fonction free personnalisée.
 if (ptr == NULL) return;: Si le pointeur est NULL, ne fait rien.
 metadata_t *bloc_courant = liste_libre;: Initialise un pointeur pour parcourir la liste des blocs alloués.
@@ -278,6 +288,7 @@ void *my_calloc(size_t nmemb, size_t taille) {
     }
     return ptr;
 }
+EXPLICATION:
 void *my_calloc(size_t nmemb, size_t taille): Implémente la fonction calloc personnalisée.
 size_t taille_totale = nmemb * taille;: Calcule la taille totale en multipliant le nombre d'éléments par la taille de chaque élément.
 ecrire_log("calloc: Taille: %zu", taille_totale);: Écrit une entrée dans le fichier de log.
@@ -320,7 +331,7 @@ void *my_realloc(void *ptr, size_t taille) {
     return NULL;
 }
 
-
+EXPLCIATION:
 void *my_realloc(void *ptr, size_t taille): Implémente la fonction realloc personnalisée.
 if (ptr == NULL) { return my_malloc(taille); }: Si le pointeur est NULL, alloue une nouvelle mémoire.
 if (taille == 0) { my_free(ptr); return NULL; }: Si la taille est 0, libère la mémoire et retourne NULL.
