@@ -1,0 +1,336 @@
+#define _GNU_SOURCE
+#define _GNU_SOURCE: Cette directive active les extensions spécifiques à GNU, nécessaires pour certaines fonctionnalités avancées de la bibliothèque standard.
+
+
+
+
+
+#include "my_secmalloc.private.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <string.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include "my_secmalloc.private.h": Inclut le fichier d'en-tête spécifique au projet. Cela pourrait contenir des définitions spécifiques comme la structure metadata_t.
+#include <...>: Inclut les bibliothèques standard nécessaires :
+<stdio.h>: Pour les fonctions d'entrée/sortie.
+<stdlib.h>: Pour les fonctions de gestion de la mémoire et les conversions.
+<unistd.h>: Pour les constantes et les types POSIX.
+<sys/mman.h>: Pour la gestion de la mémoire (fonction mmap).
+<string.h>: Pour les opérations sur les chaînes de caractères et la mémoire.
+<fcntl.h>: Pour les opérations sur les fichiers (fonction open).
+<stdarg.h>: Pour la gestion des arguments variables.
+
+
+
+
+
+#define TAILLE_CANARY 16
+#define TAILLE_POOL 1024*1024*1024
+#define TAILLE_CANARY 16: Définit la taille du canari à 16 octets. Les canaris sont des séquences de bits insérées pour détecter les débordements de mémoire.
+#define TAILLE_POOL 102410241024: Définit la taille du pool de mémoire à 1 Go (1024 Mo).
+
+
+
+
+void *pool_data = NULL;
+void *pool_meta = NULL;
+metadata_t *liste_libre = NULL;
+FILE *log_file = NULL;
+void *pool_data = NULL;: Pointeur vers la mémoire allouée pour les données.
+void *pool_meta = NULL;: Pointeur vers la mémoire allouée pour les métadonnées.
+metadata_t *liste_libre = NULL;: Pointeur vers la liste chaînée des blocs de mémoire libres.
+FILE *log_file = NULL;: Pointeur vers le fichier de log.
+
+
+
+
+
+
+
+void generer_canary(unsigned char *canary) {
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd == -1) {
+        perror("open");
+        exit(1);
+    }
+    if (read(fd, canary, TAILLE_CANARY) != TAILLE_CANARY) {
+        perror("read");
+        exit(1);
+    }
+    close(fd);
+}
+void generer_canary(unsigned char *canary): Fonction qui génère une séquence aléatoire pour le canari.
+int fd = open("/dev/urandom", O_RDONLY);: Ouvre le fichier spécial /dev/urandom en lecture seule. Ce fichier fournit des données aléatoires.
+if (fd == -1) { perror("open"); exit(1); }: Vérifie si l'ouverture du fichier a échoué. Si c'est le cas, affiche un message d'erreur et termine le programme.
+if (read(fd, canary, TAILLE_CANARY) != TAILLE_CANARY) { perror("read"); exit(1); }: Lit TAILLE_CANARY octets de données aléatoires dans canary. Si la lecture échoue, affiche un message d'erreur et termine le programme.
+close(fd);: Ferme le fichier.
+
+
+
+
+
+
+void init_log_file(void) {
+    const char *log_path = getenv("MSM_OUTPUT");
+    if (log_path) {
+        log_file = fopen(log_path, "a");
+        if (!log_file) {
+            perror("fopen");
+            exit(1);
+        }
+    }
+}
+void init_log_file(void): Initialise le fichier de log.
+const char *log_path = getenv("MSM_OUTPUT");: Récupère le chemin du fichier de log depuis la variable d'environnement MSM_OUTPUT.
+if (log_path) { ... }: Si la variable d'environnement est définie :
+log_file = fopen(log_path, "a");: Ouvre le fichier en mode ajout ("a").
+if (!log_file) { perror("fopen"); exit(1); }: Vérifie si l'ouverture du fichier a échoué. Si c'est le cas, affiche un message d'erreur et termine le programme.
+
+
+
+
+
+void ecrire_log(const char *format, ...) {
+    if (log_file) {
+        va_list args;
+        va_start(args, format);
+
+        char buffer[512];
+        vsprintf(buffer, format, args);
+        fprintf(log_file, "%s\n", buffer);
+
+        va_end(args);
+        fflush(log_file);
+    }
+}
+void ecrire_log(const char *format, ...): Écrit un message formaté dans le fichier de log.
+if (log_file) { ... }: Si le fichier de log est ouvert :
+va_list args; va_start(args, format);: Initialise args pour accéder aux arguments variables.
+char buffer[512]; vsprintf(buffer, format, args);: Formate le message dans buffer en utilisant les arguments variables.
+fprintf(log_file, "%s\n", buffer);: Écrit le message formaté dans le fichier de log.
+va_end(args);: Termine l'utilisation de args.
+fflush(log_file);: Vide le tampon de sortie du fichier, assurant que les données sont écrites immédiatement.
+
+
+
+
+
+
+void init_pools(void) {
+    pool_data = mmap(NULL, TAILLE_POOL, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (pool_data == MAP_FAILED) {
+        perror("mmap pool_data");
+        exit(1);
+    }
+    pool_meta = mmap(NULL, TAILLE_POOL, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (pool_meta == MAP_FAILED) {
+        perror("mmap pool_meta");
+        exit(1);
+    }
+
+    liste_libre = (metadata_t *)pool_meta;
+    liste_libre->precedent = NULL;
+    liste_libre->suivant = NULL;
+    liste_libre->pointeur_data = pool_data;
+    liste_libre->taille = TAILLE_POOL;
+    liste_libre->est_alloue = false;
+    generer_canary(liste_libre->canary);
+    liste_libre->pointeur_canary = (void *)((char *)liste_libre->pointeur_data + liste_libre->taille - TAILLE_CANARY);
+}
+void init_pools(void): Initialise les pools de mémoire pour les données et les métadonnées.
+pool_data = mmap(...): Alloue un pool de mémoire de taille TAILLE_POOL pour les données en utilisant mmap.
+if (pool_data == MAP_FAILED) { perror("mmap pool_data"); exit(1); }: Vérifie si l'allocation a échoué. Si c'est le cas, affiche un message d'erreur et termine le programme.
+pool_meta = mmap(...): Alloue un autre pool de même taille pour les métadonnées.
+if (pool_meta == MAP_FAILED) { perror("mmap pool_meta"); exit(1); }: Vérifie si l'allocation a échoué. Si c'est le cas, affiche un message d'erreur et termine le programme.
+liste_libre = (metadata_t *)pool_meta;: Initialise la liste des blocs libres avec le premier bloc couvrant tout le pool.
+liste_libre->precedent = NULL; liste_libre->suivant = NULL;: Initialise les pointeurs de la liste chaînée.
+liste_libre->pointeur_data = pool_data; liste_libre->taille = TAILLE_POOL; liste_libre->est_alloue = false;: Initialise les champs de métadonnées pour le bloc initial.
+generer_canary(liste_libre->canary);: Génère un canari pour ce bloc.
+liste_libre->pointeur_canary = (void *)((char *)liste_libre->pointeur_data + liste_libre->taille - TAILLE_CANARY);: Positionne le canari à la fin du bloc.
+
+
+
+
+
+
+
+void *my_malloc(size_t taille) {
+    if (taille == 0) {
+        return NULL;
+    }
+
+    metadata_t *bloc_courant = liste_libre;
+    while (bloc_courant) {
+        if (bloc_courant->taille >= taille && !bloc_courant->est_alloue) {
+            bloc_courant->est_alloue = true;
+            ecrire_log("malloc: Taille: %zu, Adresse: %p", taille, bloc_courant->pointeur_data);
+            return bloc_courant->pointeur_data;
+        }
+        bloc_courant = bloc_courant->suivant;
+    }
+
+    metadata_t *nouveau_bloc_meta = mmap(NULL, sizeof(metadata_t), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (nouveau_bloc_meta == MAP_FAILED) {
+        perror("mmap metadata_t");
+        exit(1);
+    }
+    nouveau_bloc_meta->precedent = NULL;
+    nouveau_bloc_meta->suivant = NULL;
+    nouveau_bloc_meta->pointeur_data = mmap(NULL, taille, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (nouveau_bloc_meta->pointeur_data == MAP_FAILED) {
+        perror("mmap data");
+        exit(1);
+    }
+    nouveau_bloc_meta->taille = taille;
+    nouveau_bloc_meta->est_alloue = true;
+    generer_canary(nouveau_bloc_meta->canary);
+    nouveau_bloc_meta->pointeur_canary = (void *)((char *)nouveau_bloc_meta->pointeur_data + nouveau_bloc_meta->taille - TAILLE_CANARY);
+
+    nouveau_bloc_meta->suivant = liste_libre;
+    if (liste_libre) {
+        liste_libre->precedent = nouveau_bloc_meta;
+    }
+    liste_libre = nouveau_bloc_meta;
+    ecrire_log("malloc: Taille: %zu, Adresse: %p", taille, nouveau_bloc_meta->pointeur_data);
+    return nouveau_bloc_meta->pointeur_data;
+}
+void *my_malloc(size_t taille): Implémente la fonction malloc personnalisée.
+if (taille == 0) { return NULL; }: Si la taille demandée est 0, retourne NULL.
+metadata_t *bloc_courant = liste_libre;: Initialise un pointeur pour parcourir la liste des blocs libres.
+while (bloc_courant) { ... }: Parcourt la liste chaînée des blocs libres.
+if (bloc_courant->taille >= taille && !bloc_courant->est_alloue) { ... }: Si un bloc libre suffisamment grand est trouvé :
+bloc_courant->est_alloue = true;: Marque le bloc comme alloué.
+ecrire_log("malloc: Taille: %zu, Adresse: %p", taille, bloc_courant->pointeur_data);: Écrit une entrée dans le fichier de log.
+return bloc_courant->pointeur_data;: Retourne le pointeur vers les données du bloc.
+bloc_courant = bloc_courant->suivant;: Passe au bloc suivant.
+metadata_t *nouveau_bloc_meta = mmap(NULL, sizeof(metadata_t), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);: Alloue un nouveau bloc de métadonnées si aucun bloc libre suffisamment grand n'est trouvé.
+if (nouveau_bloc_meta == MAP_FAILED) { perror("mmap metadata_t"); exit(1); }: Vérifie si l'allocation a échoué. Si c'est le cas, affiche un message d'erreur et termine le programme.
+nouveau_bloc_meta->precedent = NULL; nouveau_bloc_meta->suivant = NULL;: Initialise les pointeurs de la liste chaînée pour le nouveau bloc.
+nouveau_bloc_meta->pointeur_data = mmap(NULL, taille, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);: Alloue un nouveau bloc de données.
+if (nouveau_bloc_meta->pointeur_data == MAP_FAILED) { perror("mmap data"); exit(1); }: Vérifie si l'allocation a échoué. Si c'est le cas, affiche un message d'erreur et termine le programme.
+nouveau_bloc_meta->taille = taille; nouveau_bloc_meta->est_alloue = true;: Initialise la taille et marque le bloc comme alloué.
+generer_canary(nouveau_bloc_meta->canary);: Génère un canari pour ce bloc.
+nouveau_bloc_meta->pointeur_canary = (void *)((char *)nouveau_bloc_meta->pointeur_data + nouveau_bloc_meta->taille - TAILLE_CANARY);: Positionne le canari à la fin du bloc.
+nouveau_bloc_meta->suivant = liste_libre;: Insère le nouveau bloc en tête de la liste chaînée.
+if (liste_libre) { liste_libre->precedent = nouveau_bloc_meta; }: Met à jour le pointeur précédent du bloc actuellement en tête.
+liste_libre = nouveau_bloc_meta;: Met à jour la tête de la liste chaînée.
+ecrire_log("malloc: Taille: %zu, Adresse: %p", taille, nouveau_bloc_meta->pointeur_data);: Écrit une entrée dans le fichier de log.
+return nouveau_bloc_meta->pointeur_data;: Retourne le pointeur vers les données du nouveau bloc.
+c
+
+
+
+
+
+
+void my_free(void *ptr) {
+    if (ptr == NULL) return;
+
+    metadata_t *bloc_courant = liste_libre;
+    while (bloc_courant) {
+        if (bloc_courant->pointeur_data == ptr) {
+            if (!bloc_courant->est_alloue) {
+                return;
+            }
+
+            unsigned char *canary_ptr = (unsigned char *)bloc_courant->pointeur_canary;
+            for (size_t i = 0; i < TAILLE_CANARY; ++i) {
+                if (canary_ptr[i] != bloc_courant->canary[i]) {
+                   fprintf(stderr, "Erreur: Canary altéré pour le bloc à l'adresse %p\n", ptr);
+                    return;
+                }
+            }
+
+            bloc_courant->est_alloue = false;
+            ecrire_log("free: Taille: %zu, Adresse: %p", bloc_courant->taille, ptr);
+            return;
+        }
+        bloc_courant = bloc_courant->suivant;
+    }
+}
+void my_free(void *ptr): Implémente la fonction free personnalisée.
+if (ptr == NULL) return;: Si le pointeur est NULL, ne fait rien.
+metadata_t *bloc_courant = liste_libre;: Initialise un pointeur pour parcourir la liste des blocs alloués.
+while (bloc_courant) { ... }: Parcourt la liste chaînée des blocs.
+if (bloc_courant->pointeur_data == ptr) { ... }: Si le bloc correspondant au pointeur est trouvé :
+if (!bloc_courant->est_alloue) { return; }: Si le bloc n'est pas alloué, ne fait rien.
+unsigned char *canary_ptr = (unsigned char *)bloc_courant->pointeur_canary;: Initialise un pointeur vers le canari.
+for (size_t i = 0; i < TAILLE_CANARY; ++i) { ... }: Vérifie l'intégrité du canari.
+if (canary_ptr[i] != bloc_courant->canary[i]) { fprintf(stderr, "Erreur: Canary altéré pour le bloc à l'adresse %p\n", ptr); return; }: Si le canari est altéré, affiche un message d'erreur et ne libère pas le bloc.
+bloc_courant->est_alloue = false;: Marque le bloc comme non alloué.
+ecrire_log("free: Taille: %zu, Adresse: %p", bloc_courant->taille, ptr);: Écrit une entrée dans le fichier de log.
+return;: Termine la fonction.
+bloc_courant = bloc_courant->suivant;: Passe au bloc suivant.
+c
+
+
+
+
+void *my_calloc(size_t nmemb, size_t taille) {
+    size_t taille_totale = nmemb * taille;
+    ecrire_log("calloc: Taille: %zu", taille_totale);
+    void *ptr = my_malloc(taille_totale);
+    if (ptr) {
+        memset(ptr, 0, taille_totale);
+    }
+    return ptr;
+}
+void *my_calloc(size_t nmemb, size_t taille): Implémente la fonction calloc personnalisée.
+size_t taille_totale = nmemb * taille;: Calcule la taille totale en multipliant le nombre d'éléments par la taille de chaque élément.
+ecrire_log("calloc: Taille: %zu", taille_totale);: Écrit une entrée dans le fichier de log.
+void *ptr = my_malloc(taille_totale);: Alloue la mémoire nécessaire en appelant my_malloc.
+if (ptr) { memset(ptr, 0, taille_totale); }: Si l'allocation a réussi, initialise la mémoire à zéro.
+return ptr;: Retourne le pointeur vers la mémoire allouée.
+c
+
+
+
+
+
+
+void *my_realloc(void *ptr, size_t taille) {
+    if (ptr == NULL) {
+        return my_malloc(taille);
+    }
+    if (taille == 0) {
+        my_free(ptr);
+        return NULL;
+    }
+
+    metadata_t *bloc_courant = liste_libre;
+    while (bloc_courant) {
+        if (bloc_courant->pointeur_data == ptr) {
+            if (bloc_courant->taille >= taille) {
+                return ptr;
+            }
+
+            void *nouveau_ptr = my_malloc(taille);
+            if (nouveau_ptr) {
+                memcpy(nouveau_ptr, ptr, bloc_courant->taille);
+                my_free(ptr);
+            }
+            ecrire_log("realloc: Ancienne taille: %zu, Nouvelle taille: %zu, Ancienne adresse: %p, Nouvelle adresse: %p", bloc_courant->taille, taille, ptr, nouveau_ptr);
+            return nouveau_ptr;
+        }
+        bloc_courant = bloc_courant->suivant;
+    }
+    return NULL;
+}
+
+
+void *my_realloc(void *ptr, size_t taille): Implémente la fonction realloc personnalisée.
+if (ptr == NULL) { return my_malloc(taille); }: Si le pointeur est NULL, alloue une nouvelle mémoire.
+if (taille == 0) { my_free(ptr); return NULL; }: Si la taille est 0, libère la mémoire et retourne NULL.
+metadata_t *bloc_courant = liste_libre;: Initialise un pointeur pour parcourir la liste des blocs alloués.
+while (bloc_courant) { ... }: Parcourt la liste chaînée des blocs.
+if (bloc_courant->pointeur_data == ptr) { ... }: Si le bloc correspondant au pointeur est trouvé :
+if (bloc_courant->taille >= taille) { return ptr; }: Si le bloc actuel est suffisamment grand, retourne le pointeur original.
+void *nouveau_ptr = my_malloc(taille);: Alloue un nouveau bloc de la taille demandée.
+if (nouveau_ptr) { memcpy(nouveau_ptr, ptr, bloc_courant->taille); my_free(ptr); }: Si l'allocation a réussi, copie les données de l'ancien bloc vers le nouveau et libère l'ancien bloc.
+ecrire_log("realloc: Ancienne taille: %zu, Nouvelle taille: %zu, Ancienne adresse: %p, Nouvelle adresse: %p", bloc_courant->taille, taille, ptr, nouveau_ptr);: Écrit une entrée dans le fichier de log.
+return nouveau_ptr;: Retourne le pointeur vers le nouveau bloc.
+bloc_courant = bloc_courant->suivant;: Passe au bloc suivant.
+return NULL;: Si le bloc n'est pas trouvé, retourne NULL.
