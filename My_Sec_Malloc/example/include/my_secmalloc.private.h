@@ -23,8 +23,9 @@ extern void *pool_meta;
 extern metadata_t *liste_libre;
 
 void generer_canary(unsigned char *canary);
-void init_log_file(void);
-void ecrire_log(const char *type, ...);
+//void init_log_file(void);
+//void ecrire_log(const char *type, ...);
+int log_message(const char *format, ...);
 void init_pools(void);
 
 #endif // _SECMALLOC_PRIVATE_H

@@ -7,6 +7,9 @@
 #include <string.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <syslog.h>
+#include <alloca.h>
+
 
 #define TAILLE_CANARY 16
 #define TAILLE_POOL 1024*1024*1024
@@ -15,6 +18,48 @@ void *pool_data = NULL;
 void *pool_meta = NULL;
 metadata_t *liste_libre = NULL;
 FILE *log_file = NULL;
+
+int log_message(const char *format, ...) {
+    va_list args, args_copy;
+    va_start(args, format);
+
+    // Déterminer la taille du buffer nécessaire
+    va_copy(args_copy, args);
+    size_t size = vsnprintf(NULL, 0, format, args_copy) + 1; // +1 pour le null-terminator
+    va_end(args_copy);
+
+    // Allouer le buffer sur la pile
+    char *buffer = (char *)alloca(size);
+
+    // Écrire les données formatées dans le buffer
+    vsnprintf(buffer, size, format, args);
+    va_end(args);
+
+    // Initialisation du chemin du fichier de journalisation
+    char *log_file = getenv("MSM_OUTPUT");
+    if (log_file == NULL) {
+        fprintf(stderr, "Erreur : Chemin du fichier de journalisation non défini.\n");
+        return -1;  // Retourner un code d'erreur
+    }
+
+    // Ouvrir le fichier de journalisation en mode ajout (append) et écriture seulement (write-only)
+    int fd = open(log_file, O_APPEND | O_WRONLY);
+    if (fd == -1) {
+        perror("Échec de l'ouverture du fichier de journalisation");
+        return -1;
+    }
+
+    // Écrire le message de journalisation dans le fichier
+    ssize_t ret = write(fd, buffer, strlen(buffer));
+    if (ret == -1) {
+        perror("Échec de l'écriture dans le fichier de journalisation");
+    }
+
+    close(fd);
+
+    return ret == -1 ? -1 : 0;  // Retourner 0 en cas de succès, -1 en cas d'erreur
+}
+
 
 void generer_canary(unsigned char *canary) {
     int fd = open("/dev/urandom", O_RDONLY);
@@ -29,30 +74,6 @@ void generer_canary(unsigned char *canary) {
     close(fd);
 }
 
-void init_log_file(void) {
-    const char *log_path = getenv("MSM_OUTPUT");
-    if (log_path) {
-        log_file = fopen(log_path, "a");
-        if (!log_file) {
-            perror("fopen");
-            exit(1);
-        }
-    }
-}
-
-void ecrire_log(const char *format, ...) { // changer la fonction
-    if (log_file) {
-        va_list args;
-        va_start(args, format);
-
-        char buffer[512];
-        vsprintf(buffer, format, args);
-        fprintf(log_file, "%s\n", buffer);
-
-        va_end(args);
-        fflush(log_file);
-    }
-}
 
 void init_pools(void) {
     pool_data = mmap(NULL, TAILLE_POOL, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -85,7 +106,7 @@ void *my_malloc(size_t taille) {
     while (bloc_courant) {
         if (bloc_courant->taille >= taille && !bloc_courant->est_alloue) {
             bloc_courant->est_alloue = true;
-            ecrire_log("malloc: Taille: %zu, Adresse: %p", taille, bloc_courant->pointeur_data);
+            log_message("malloc: Taille: %zu, Adresse: %p", taille, bloc_courant->pointeur_data);
             return bloc_courant->pointeur_data;
         }
         bloc_courant = bloc_courant->suivant;
@@ -113,7 +134,7 @@ void *my_malloc(size_t taille) {
         liste_libre->precedent = nouveau_bloc_meta;
     }
     liste_libre = nouveau_bloc_meta;
-    ecrire_log("malloc: Taille: %zu, Adresse: %p", taille, nouveau_bloc_meta->pointeur_data);
+    log_message("malloc: Taille: %zu, Adresse: %p", taille, nouveau_bloc_meta->pointeur_data);
     return nouveau_bloc_meta->pointeur_data;
 }
 
@@ -136,7 +157,7 @@ void my_free(void *ptr) {
             }
 
             bloc_courant->est_alloue = false;
-            ecrire_log("free: Taille: %zu, Adresse: %p", bloc_courant->taille, ptr);
+            log_message("free: Taille: %zu, Adresse: %p", bloc_courant->taille, ptr);
             return;
         }
         bloc_courant = bloc_courant->suivant;
@@ -145,7 +166,7 @@ void my_free(void *ptr) {
 
 void *my_calloc(size_t nmemb, size_t taille) {
     size_t taille_totale = nmemb * taille;
-    ecrire_log("calloc: Taille: %zu", taille_totale);
+    log_message("calloc: Taille: %zu", taille_totale);
     void *ptr = my_malloc(taille_totale);
     if (ptr) {
         memset(ptr, 0, taille_totale);
@@ -171,7 +192,7 @@ void *my_realloc(void *ptr, size_t nouvelle_taille) {
             }
 
             if (bloc_courant->taille >= nouvelle_taille) {
-                ecrire_log("realloc: Taille: %zu, Adresse: %p", nouvelle_taille, ptr);
+                log_message("realloc: Taille: %zu, Adresse: %p", nouvelle_taille, ptr);
                 return ptr;
             }
 
@@ -180,7 +201,7 @@ void *my_realloc(void *ptr, size_t nouvelle_taille) {
                 memcpy(new_ptr, ptr, bloc_courant->taille);
                 my_free(ptr);
             }
-            ecrire_log("realloc: Taille: %zu, Nouvelle Adresse: %p", nouvelle_taille, new_ptr);
+            log_message("realloc: Taille: %zu, Nouvelle Adresse: %p", nouvelle_taille, new_ptr);
             return new_ptr;
         }
         bloc_courant = bloc_courant->suivant;

@@ -1,0 +1,67 @@
+mkdir -p log
+env MSM_OUTPUT=/home/fcamus/Bureau/Sec_Malloc/My_Sec_Malloc/example/log/logfile.log ./test_exec
+
+TEST 04
+
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+
+TEST 04 OK
+
+TEST 03
+
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+
+TEST 03 OK
+
+TEST 05
+
+Log file is not open.
+ptr113 created, value: xxxxxxxxxxxxxxxxxxx
+Log file is not open.
+ptr114 created, value: helloworld
+Log file is not open.
+Log file is not open.
+ptr115 created, value: xxxxxxxxxxxxxxxxxxxaaaaaaaaaa
+Log file is not open.
+ptr116 created, value: xxxxxxxxxxxxxxxxxxxaaaaaaaaaa
+Before realloc: ptr116: 0x7815b02c8000, size: 20
+Log file is not open.
+After realloc: ptr117: 0x7815b02c8000, ptr116: 0x7815b02c8000
+
+fail test5
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+
+TEST 05 OK
+
+TEST 02
+
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+Log file is not open.
+
+TEST 02 OK
+
+TEST 06
+
+Log file is not open.
+Log file is not open.
+
+TEST 06 OK

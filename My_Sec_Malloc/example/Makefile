@@ -1,6 +1,7 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -std=c11 -fPIC -Iinclude
+CRITERION_FLAGS = -lcriterion
 
 # Directories
 SRC_DIR = src
@@ -16,9 +17,6 @@ DYNAMIC_LIB = libmy_secmalloc.so
 TEST_EXEC = test_exec
 LOG_FILE = $(LOG_DIR)/logfile.log
 
-# Criterion flags for unit testing
-CRITERION_FLAGS = -lcriterion
-
 # Targets
 .PHONY: all static dynamic clean test_static test_dynamic
 
@@ -28,19 +26,14 @@ static: $(STATIC_LIB)
 
 dynamic: $(DYNAMIC_LIB)
 
-test_static: static $(TEST_EXEC)
-	mkdir -p $(LOG_DIR)
+test_static: static $(TEST_EXEC) | create_log_dir
 	env MSM_OUTPUT=$(PWD)/$(LOG_FILE) ./$(TEST_EXEC)
 
-test_dynamic: dynamic $(TEST_EXEC)
-	mkdir -p $(LOG_DIR)
-	env MSM_OUTPUT=$(PWD)/$(LOG_FILE) \
-    LD_PRELOAD=$(PWD)/$(DYNAMIC_LIB) \
-    LD_LIBRARY_PATH=$(PWD):$(LD_LIBRARY_PATH) \
-    ./$(TEST_EXEC)
+test_dynamic: dynamic $(TEST_EXEC) | create_log_dir
+	env MSM_OUTPUT=$(PWD)/$(LOG_FILE) LD_PRELOAD=$(PWD)/$(DYNAMIC_LIB) LD_LIBRARY_PATH=$(PWD):$(LD_LIBRARY_PATH) ./$(TEST_EXEC)
 
 clean:
-	rm -rf $(OBJ) $(STATIC_LIB) $(DYNAMIC_LIB) $(TEST_EXEC) $(LOG_DIR)
+	rm -rf $(OBJ) $(STATIC_LIB) $(DYNAMIC_LIB) $(TEST_EXEC)
 
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c $(INCLUDE_DIR)/my_secmalloc.h $(INCLUDE_DIR)/my_secmalloc.private.h
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -53,4 +46,13 @@ $(DYNAMIC_LIB): $(OBJ)
 
 $(TEST_EXEC): $(TEST_DIR)/test.c $(STATIC_LIB)
 	$(CC) $(CFLAGS) -o $@ $< $(STATIC_LIB) $(CRITERION_FLAGS)
+
+# Rule to create log directory
+create_log_dir:
+	mkdir -p $(LOG_DIR)
+
+# Rule to create empty logfile.log if not exists
+$(LOG_FILE):
+	touch $(LOG_FILE)
+
 
